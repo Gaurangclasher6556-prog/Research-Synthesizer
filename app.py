@@ -26,14 +26,19 @@ except ImportError:
     pass
 # ══════════════════════════════════════════════
 
-import config
-from utils import (
-    VectorStore,
-    extract_title_and_abstract,
-    parse_pdf_to_markdown,
-    word_count,
-    logger,
-)
+try:
+    import config
+    from utils import (
+        VectorStore,
+        extract_title_and_abstract,
+        parse_pdf_to_markdown,
+        word_count,
+        logger,
+    )
+except Exception as e:
+    st.error(f"Failed to boot! Error during imports: {str(e)}")
+    st.code(traceback.format_exc())
+    st.stop()
 
 # ══════════════════════════════════════════════
 # Page Config
