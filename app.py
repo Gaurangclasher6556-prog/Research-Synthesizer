@@ -16,6 +16,16 @@ from pathlib import Path
 
 import streamlit as st
 
+# ══════════════════════════════════════════════
+# Streamlit Cloud ChromaDB Fix (SQLite3 version issue)
+import sys
+try:
+    __import__('pysqlite3')
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    pass
+# ══════════════════════════════════════════════
+
 import config
 from utils import (
     VectorStore,

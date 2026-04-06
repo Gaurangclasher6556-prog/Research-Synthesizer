@@ -1,7 +1,12 @@
 # ══════════════════════════════════════════════
 # Research Synthesizer – Cloud-Deployable Dependencies
-# Install with: pip install -r requirements.txt
 # ══════════════════════════════════════════════
+
+# ── FIX: Streamlit Cloud OOM crash ──
+# Force CPU-only PyTorch so it doesn't download 2.5GB of CUDA drivers
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
 
 # ── Core Agent Framework ──
 crewai[tools]
@@ -12,6 +17,7 @@ PyMuPDF
 
 # ── Vector Database ──
 chromadb
+pysqlite3-binary  # Fix for Streamlit Cloud SQLite3 version error
 
 # ── ArXiv Search ──
 arxiv
