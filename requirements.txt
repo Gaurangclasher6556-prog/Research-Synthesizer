@@ -1,0 +1,33 @@
+# ══════════════════════════════════════════════
+# Research Synthesizer – Cloud-Deployable Dependencies
+# Install with: pip install -r requirements.txt
+# ══════════════════════════════════════════════
+
+# ── Core Agent Framework ──
+crewai[tools]
+crewai-tools
+
+# ── PDF Parsing ──
+PyMuPDF
+
+# ── Vector Database ──
+chromadb
+
+# ── ArXiv Search ──
+arxiv
+
+# ── Embeddings (local, free) ──
+sentence-transformers
+
+# ── NLP / Plagiarism Detection ──
+scikit-learn
+numpy
+
+# ── Utilities ──
+python-dotenv
+pydantic
+rich
+
+# ── Streamlit UI ──
+streamlit
+markdown
