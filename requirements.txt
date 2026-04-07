@@ -5,6 +5,7 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
 crewai[litellm]
+google-generativeai
 crewai-tools
 PyMuPDF
 chromadb
