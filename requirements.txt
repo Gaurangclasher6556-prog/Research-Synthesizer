@@ -2,7 +2,9 @@
 # Research Synthesizer – Cloud-Deployable Dependencies
 # ══════════════════════════════════════════════
 
-crewai
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+crewai[litellm]
 crewai-tools
 PyMuPDF
 chromadb
