@@ -33,22 +33,31 @@ from tools import (
 
 
 def _get_llm() -> LLM:
-    """Create LLM with automatic retry/backoff on Groq rate-limit errors."""
-    if config.LLM_BACKEND == "groq":
-        if config.GROQ_API_KEY:
-            os.environ["GROQ_API_KEY"] = config.GROQ_API_KEY
+    """Create LLM – prefers Gemini (1M TPM free), falls back to Groq, then Ollama."""
+    # Priority 1: Google Gemini (1,000,000 TPM on free tier – best choice)
+    if config.GEMINI_API_KEY:
+        os.environ["GEMINI_API_KEY"] = config.GEMINI_API_KEY
+        return LLM(
+            model=config.GEMINI_MODEL,
+            temperature=config.GEMINI_TEMPERATURE,
+            max_retries=3,
+            timeout=120,
+        )
+    # Priority 2: Groq (very rate-limited on free tier – 6k TPM)
+    if config.LLM_BACKEND == "groq" and config.GROQ_API_KEY:
+        os.environ["GROQ_API_KEY"] = config.GROQ_API_KEY
         return LLM(
             model=f"groq/{config.GROQ_MODEL}",
             temperature=config.GROQ_TEMPERATURE,
-            max_retries=6,        # retry up to 6× on any error
+            max_retries=6,
             timeout=120,
         )
-    else:
-        return LLM(
-            model=f"ollama/{config.OLLAMA_MODEL}",
-            base_url=config.OLLAMA_BASE_URL,
-            temperature=config.OLLAMA_TEMPERATURE,
-        )
+    # Priority 3: Ollama (local)
+    return LLM(
+        model=f"ollama/{config.OLLAMA_MODEL}",
+        base_url=config.OLLAMA_BASE_URL,
+        temperature=config.OLLAMA_TEMPERATURE,
+    )
 
 
 # ╔══════════════════════════════════════════════╗

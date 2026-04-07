@@ -477,16 +477,25 @@ for k, v in defaults.items():
 
 def _load_groq_key() -> str:
     """Load Groq API key from: Streamlit secrets > .env > manual input."""
-    # Priority 1: Streamlit Cloud secrets (set by app owner)
     try:
         key = st.secrets.get("GROQ_API_KEY", "")
         if key:
             return key
     except Exception:
         pass
-    # Priority 2: Environment variable / .env file
     key = config.GROQ_API_KEY or os.environ.get("GROQ_API_KEY", "")
     return key
+
+
+def _load_gemini_key() -> str:
+    """Load Gemini API key from: Streamlit secrets > .env > manual input."""
+    try:
+        key = st.secrets.get("GEMINI_API_KEY", "")
+        if key:
+            return key
+    except Exception:
+        pass
+    return config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
 
 
 def check_groq_key() -> bool:
@@ -642,48 +651,82 @@ with st.sidebar:
 
     st.divider()
 
-    # API Key — auto-load from secrets, only show input if needed
-    secret_key = _load_groq_key()
-    if secret_key:
-        # Key loaded from secrets or .env — no user input needed
-        config.GROQ_API_KEY = secret_key
-        os.environ["GROQ_API_KEY"] = secret_key
+    # API Key section – Gemini preferred (1M TPM free), Groq as fallback
+    st.markdown("### 🔑 AI Engine")
+
+    gemini_secret = _load_gemini_key()
+    groq_secret = _load_groq_key()
+
+    if gemini_secret:
+        config.GEMINI_API_KEY = gemini_secret
+        os.environ["GEMINI_API_KEY"] = gemini_secret
         has_key = True
-        st.markdown("### 🔐 System")
-        st.success("✓ AI engine ready", icon="✅")
+        st.success("✓ Gemini AI ready (1M TPM)", icon="✅")
+    elif groq_secret:
+        config.GROQ_API_KEY = groq_secret
+        os.environ["GROQ_API_KEY"] = groq_secret
+        has_key = True
+        st.success("✓ Groq AI ready", icon="✅")
     else:
-        # No secret configured — show input for manual entry
-        st.markdown("### 🔑 API Configuration")
-        groq_key = st.text_input(
-            "Groq API Key",
-            value="",
-            type="password",
-            help="Free from console.groq.com — no credit card needed",
+        # Manual entry — prefer Gemini
+        st.info(
+            "**Recommended:** Use Google Gemini (1M tokens/min free).\n\n"
+            "Get a free key → [aistudio.google.com](https://aistudio.google.com/apikey)",
+            icon="🌟"
         )
-        if groq_key:
-            config.GROQ_API_KEY = groq_key
-            os.environ["GROQ_API_KEY"] = groq_key
-        has_key = check_groq_key()
-        if has_key:
-            st.success("✓ API key configured", icon="🔐")
+        gemini_key = st.text_input(
+            "Gemini API Key (Recommended)",
+            value="", type="password",
+            help="Free from aistudio.google.com — 1,000,000 tokens/min!",
+        )
+        groq_key_input = st.text_input(
+            "Groq API Key (Fallback)",
+            value="", type="password",
+            help="Free from console.groq.com — but very rate-limited (6k TPM)",
+        )
+        if gemini_key:
+            config.GEMINI_API_KEY = gemini_key
+            os.environ["GEMINI_API_KEY"] = gemini_key
+            has_key = True
+            st.success("✓ Gemini key set!", icon="✅")
+        elif groq_key_input:
+            config.GROQ_API_KEY = groq_key_input
+            os.environ["GROQ_API_KEY"] = groq_key_input
+            has_key = bool(groq_key_input and len(groq_key_input) > 10)
+            if has_key:
+                st.warning("⚠️ Groq has very low rate limits. Gemini is recommended.", icon="⚠️")
         else:
-            st.info("Get a free key at [console.groq.com](https://console.groq.com)", icon="🔑")
+            has_key = False
 
     st.divider()
 
-    # Model Selection
+    # Model Selection — Gemini models first
     st.markdown("### ⚙️ Model & Parameters")
-    model_options = {
-        "llama-3.1-8b-instant": "Llama 3.1 8B (Fastest)",
-        "llama-3.3-70b-versatile": "Llama 3.3 70B (Best Quality)",
-        "gemma2-9b-it": "Gemma 2 9B (Google)",
-    }
-    selected_model = st.selectbox(
-        "Language Model",
-        options=list(model_options.keys()),
-        format_func=lambda x: model_options[x],
-    )
-    config.GROQ_MODEL = selected_model
+    using_gemini = bool(config.GEMINI_API_KEY)
+    if using_gemini:
+        model_options = {
+            "gemini/gemini-1.5-flash": "✨ Gemini 1.5 Flash (Recommended)",
+            "gemini/gemini-1.5-pro": "Gemini 1.5 Pro (High Quality)",
+            "gemini/gemini-2.0-flash": "Gemini 2.0 Flash (Fastest)",
+        }
+        selected_model = st.selectbox(
+            "Language Model",
+            options=list(model_options.keys()),
+            format_func=lambda x: model_options[x],
+        )
+        config.GEMINI_MODEL = selected_model
+    else:
+        model_options = {
+            "llama-3.1-8b-instant": "Llama 3.1 8B (Fastest)",
+            "llama-3.3-70b-versatile": "Llama 3.3 70B (Best Quality)",
+            "gemma2-9b-it": "Gemma 2 9B (Google)",
+        }
+        selected_model = st.selectbox(
+            "Language Model",
+            options=list(model_options.keys()),
+            format_func=lambda x: model_options[x],
+        )
+        config.GROQ_MODEL = selected_model
 
     max_results = st.slider("ArXiv papers per query", 2, 10, config.ARXIV_MAX_RESULTS_PER_QUERY)
     config.ARXIV_MAX_RESULTS_PER_QUERY = max_results

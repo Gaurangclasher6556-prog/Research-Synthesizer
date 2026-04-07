@@ -29,16 +29,19 @@ for _dir in [DATA_DIR, INPUT_DIR, OUTPUT_DIR, PAPERS_DIR, CHROMA_DIR, PARSED_DIR
 # ──────────────────────────────────────────────
 LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")
 
-# ── Groq (Cloud – Free tier) ──
+# ── Google Gemini (Cloud – Free tier, 1M TPM!) ──
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini/gemini-1.5-flash")
+GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
+
+# ── Groq (Cloud – Free tier, 6k TPM – very limited) ──
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.1-8b-instant")
 GROQ_TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0.3"))
 
-# Available Groq models (all free):
-# - llama-3.3-70b-versatile   (best quality, recommended)
+# Available Groq models (all free, but very rate-limited):
 # - llama-3.1-8b-instant      (fastest)
-# - mixtral-8x7b-32768        (good for long context)
-# - gemma2-9b-it              (Google's model)
+# - llama-3.3-70b-versatile   (best quality)
 
 # ── Ollama (Local – fallback) ──
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
