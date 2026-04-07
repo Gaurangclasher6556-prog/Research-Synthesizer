@@ -648,7 +648,6 @@ with st.sidebar:
     model_options = {
         "llama-3.3-70b-versatile": "Llama 3.3 70B (Best Quality)",
         "llama-3.1-8b-instant": "Llama 3.1 8B (Fastest)",
-        "mixtral-8x7b-32768": "Mixtral 8×7B (Long Context)",
         "gemma2-9b-it": "Gemma 2 9B (Google)",
     }
     selected_model = st.selectbox(
