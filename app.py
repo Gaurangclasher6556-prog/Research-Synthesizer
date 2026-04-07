@@ -525,8 +525,9 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
         paper_markdown = parse_pdf_to_markdown(pdf_path)
         
         # 🛡️ TRUNCATE LARGE PAPERS to prevent Groq RateLimitError 
-        # 6000 words ≈ 8500 tokens (Safely under the 12000 TPM limit)
-        paper_markdown = truncate_text(paper_markdown, max_words=6000)
+        # Groq slashed limits to 6000 tokens/min!
+        # 1200 words ≈ 1600 tokens (Leaves room for agent thoughts + context)
+        paper_markdown = truncate_text(paper_markdown, max_words=1200)
         
         paper_metadata = extract_title_and_abstract(paper_markdown)
         st.session_state.paper_metadata = paper_metadata
@@ -575,6 +576,7 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
             verbose=config.VERBOSE,
             memory=True,
             full_output=True,
+            max_rpm=2, # Space out requests to bypass the token rate limits over time
         )
 
         result = crew.kickoff()
