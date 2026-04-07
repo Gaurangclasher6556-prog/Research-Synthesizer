@@ -31,7 +31,7 @@ LLM_BACKEND = os.getenv("LLM_BACKEND", "groq")
 
 # ── Google Gemini (Cloud – Free tier, 1M TPM!) ──
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini/gemini-1.5-flash")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 GEMINI_TEMPERATURE = float(os.getenv("GEMINI_TEMPERATURE", "0.3"))
 
 # ── Groq (Cloud – Free tier, 6k TPM – very limited) ──

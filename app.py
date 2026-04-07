@@ -705,9 +705,9 @@ with st.sidebar:
     using_gemini = bool(config.GEMINI_API_KEY)
     if using_gemini:
         model_options = {
-            "gemini/gemini-1.5-flash": "✨ Gemini 1.5 Flash (Recommended)",
-            "gemini/gemini-1.5-pro": "Gemini 1.5 Pro (High Quality)",
-            "gemini/gemini-2.0-flash": "Gemini 2.0 Flash (Fastest)",
+            "gemini-2.0-flash": "✨ Gemini 2.0 Flash (Recommended)",
+            "gemini-1.5-flash": "Gemini 1.5 Flash (Stable)",
+            "gemini-1.5-pro": "Gemini 1.5 Pro (High Quality)",
         }
         selected_model = st.selectbox(
             "Language Model",
