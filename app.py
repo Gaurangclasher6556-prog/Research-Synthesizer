@@ -652,8 +652,8 @@ with st.sidebar:
     # Model Selection
     st.markdown("### ⚙️ Model & Parameters")
     model_options = {
-        "llama-3.3-70b-versatile": "Llama 3.3 70B (Best Quality)",
         "llama-3.1-8b-instant": "Llama 3.1 8B (Fastest)",
+        "llama-3.3-70b-versatile": "Llama 3.3 70B (Best Quality)",
         "gemma2-9b-it": "Gemma 2 9B (Google)",
     }
     selected_model = st.selectbox(
