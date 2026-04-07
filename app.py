@@ -574,12 +574,32 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
                    critique_task, writing_task],
             process=Process.sequential,
             verbose=config.VERBOSE,
-            memory=True,
+            memory=False,       # Disable crew memory to save tokens
             full_output=True,
-            max_rpm=2, # Space out requests to bypass the token rate limits over time
+            max_rpm=1,          # Limit to 1 request/minute to safely pace free-tier
         )
 
-        result = crew.kickoff()
+        # ── Retry loop: auto-wait on Groq rate-limit errors ──────────────
+        import re as _re
+        result = None
+        for _attempt in range(6):
+            try:
+                result = crew.kickoff()
+                break
+            except Exception as _e:
+                err_str = str(_e)
+                if "rate_limit_exceeded" in err_str or "RateLimitError" in err_str:
+                    # Parse wait time from error message e.g. "try again in 36.06s"
+                    _wait_match = _re.search(r"in (\d+\.?\d*)\s*s", err_str)
+                    _wait = float(_wait_match.group(1)) + 5 if _wait_match else 65
+                    _wait = min(_wait, 90)  # cap at 90s
+                    add_log(f"⏳ Rate limit hit – waiting {_wait:.0f}s then retrying (attempt {_attempt+1}/6)...")
+                    time.sleep(_wait)
+                else:
+                    raise
+        if result is None:
+            raise RuntimeError("Pipeline failed after 6 retries due to persistent rate limits.")
+
         report = str(result)
         add_log("✓ Agent crew completed")
 
