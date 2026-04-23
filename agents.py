@@ -37,8 +37,13 @@ def _get_llm() -> LLM:
     # Priority 1: Google Gemini (1,000,000 TPM on free tier – best choice)
     if config.GEMINI_API_KEY:
         os.environ["GEMINI_API_KEY"] = config.GEMINI_API_KEY
+        # Prefix with "gemini/" so LiteLLM routes to Google AI Studio (API key)
+        # instead of Vertex AI (which requires GCE metadata credentials).
+        model_name = config.GEMINI_MODEL
+        if not model_name.startswith("gemini/"):
+            model_name = f"gemini/{model_name}"
         return LLM(
-            model=config.GEMINI_MODEL,
+            model=model_name,
             temperature=config.GEMINI_TEMPERATURE,
             max_retries=3,
             timeout=120,
