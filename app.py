@@ -527,16 +527,14 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
     try:
         # Step 1: Parse PDF
         st.session_state.pipeline_step = 1
-        status_text.markdown("**Step 1 of 5** — Parsing target paper with PDF engine...")
+        status_text.markdown("**Step 1 of 4** — Parsing target paper with PDF engine...")
         progress_bar.progress(10)
         add_log("📄 Parsing PDF...")
 
         paper_markdown = parse_pdf_to_markdown(pdf_path)
         
-        # 🛡️ TRUNCATE LARGE PAPERS to prevent Groq RateLimitError 
-        # Groq slashed limits to 6000 tokens/min!
-        # 1200 words ≈ 1600 tokens (Leaves room for agent thoughts + context)
-        paper_markdown = truncate_text(paper_markdown, max_words=1200)
+        # Truncate large papers to stay within token limits
+        paper_markdown = truncate_text(paper_markdown, max_words=2000)
         
         paper_metadata = extract_title_and_abstract(paper_markdown)
         st.session_state.paper_metadata = paper_metadata
@@ -544,7 +542,7 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
 
         # Step 2: Vector DB
         st.session_state.pipeline_step = 2
-        status_text.markdown("**Step 2 of 5** — Embedding and storing in vector database...")
+        status_text.markdown("**Step 2 of 4** — Embedding and storing in vector database...")
         progress_bar.progress(25)
         add_log("🗄️ Storing in ChromaDB...")
 
@@ -553,78 +551,27 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
                       {"title": paper_metadata["title"], "is_target": "true"})
         add_log("✓ Paper embedded and stored")
 
-        # Step 3: Agent Crew
+        # Step 3: Lightweight AI Pipeline (2 LLM calls only)
         st.session_state.pipeline_step = 3
-        status_text.markdown("**Step 3 of 5** — Running 5-agent research crew... *(this takes several minutes)*")
+        status_text.markdown("**Step 3 of 4** — Running AI analysis pipeline... *(~1-2 minutes)*")
         progress_bar.progress(40)
-        add_log("🤖 Launching CrewAI crew...")
-        add_log("   · Planner → generating arXiv queries")
-        add_log("   · Searcher → finding related papers")
-        add_log("   · Extractor → extracting methodologies")
-        add_log("   · Critic → 7-dimension evaluation")
-        add_log("   · Writer → synthesizing report")
+        add_log("🤖 Starting lightweight AI pipeline...")
+        add_log("   · Step A: Generating arXiv search queries (1 LLM call)")
+        add_log("   · Step B: Searching arXiv (no LLM needed)")
+        add_log("   · Step C: Generating synthesis report (1 LLM call)")
 
-        from crewai import Crew, Process
-        from tasks import (
-            create_planning_task, create_searching_task,
-            create_extraction_task, create_critique_task, create_writing_task,
+        from lightweight import run_lightweight_pipeline
+
+        report = run_lightweight_pipeline(
+            paper_markdown=paper_markdown,
+            paper_metadata=paper_metadata,
+            add_log=add_log,
         )
-
-        planning_task = create_planning_task(paper_markdown, paper_metadata)
-        searching_task = create_searching_task(planning_task)
-        extraction_task = create_extraction_task(searching_task)
-        critique_task = create_critique_task(paper_markdown, paper_metadata, extraction_task)
-        writing_task = create_writing_task(paper_metadata, critique_task, extraction_task)
-
-        crew = Crew(
-            agents=[planning_task.agent, searching_task.agent, extraction_task.agent,
-                    critique_task.agent, writing_task.agent],
-            tasks=[planning_task, searching_task, extraction_task,
-                   critique_task, writing_task],
-            process=Process.sequential,
-            verbose=config.VERBOSE,
-            memory=False,       # Disable crew memory to save tokens
-            full_output=True,
-            max_rpm=10,         # Gemini allows 15 RPM; 10 leaves headroom
-        )
-
-        # ── Retry loop: auto-wait on rate-limit errors ──────────────
-        # Catches Gemini (ResourceExhausted/429) and Groq rate limits.
-        import re as _re
-        from agents import reset_llm
-        result = None
-        _rate_limit_patterns = [
-            "rate_limit_exceeded", "RateLimitError", "ResourceExhausted",
-            "429", "quota", "Too Many Requests", "RATE_LIMIT_EXCEEDED",
-        ]
-        for _attempt in range(10):
-            try:
-                result = crew.kickoff()
-                break
-            except Exception as _e:
-                err_str = str(_e)
-                _is_rate_limit = any(p in err_str for p in _rate_limit_patterns)
-                if _is_rate_limit:
-                    # Parse wait time from error message e.g. "try again in 36.06s"
-                    _wait_match = _re.search(r"in (\d+\.?\d*)\s*s", err_str)
-                    # Exponential backoff: 30s, 45s, 60s, 75s, 90s…
-                    _base_wait = 30 + (_attempt * 15)
-                    _wait = float(_wait_match.group(1)) + 5 if _wait_match else _base_wait
-                    _wait = min(_wait, 120)  # cap at 2 minutes
-                    add_log(f"⏳ Rate limit hit – waiting {_wait:.0f}s then retrying (attempt {_attempt+1}/10)...")
-                    time.sleep(_wait)
-                    reset_llm()  # Reset shared LLM to clear any stale state
-                else:
-                    raise
-        if result is None:
-            raise RuntimeError("Pipeline failed after 10 retries due to persistent rate limits.")
-
-        report = str(result)
-        add_log("✓ Agent crew completed")
+        add_log("✓ AI pipeline completed")
 
         # Step 4: Save
         st.session_state.pipeline_step = 4
-        status_text.markdown("**Step 4 of 5** — Saving report...")
+        status_text.markdown("**Step 4 of 4** — Saving report...")
         progress_bar.progress(90)
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -632,7 +579,7 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
         report_path.write_text(report, encoding="utf-8")
         add_log(f"💾 Saved: {report_path.name}")
 
-        # Step 5: Done
+        # Done
         st.session_state.pipeline_step = 5
         progress_bar.progress(100)
         elapsed = time.time() - start_time
@@ -884,7 +831,7 @@ if st.session_state.pipeline_running:
     steps_data = [
         ("📄", "Parse PDF", "Extracting text from document"),
         ("🗄️", "Vector Storage", "Embedding into ChromaDB"),
-        ("🤖", "Agent Crew", "5-agent sequential analysis"),
+        ("🤖", "AI Analysis", "Search queries + arXiv + report generation"),
         ("💾", "Save Report", "Persisting results"),
         ("✓", "Complete", "Report ready"),
     ]
