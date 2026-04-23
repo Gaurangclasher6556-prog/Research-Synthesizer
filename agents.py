@@ -2,7 +2,8 @@
 agents.py – Agent definitions for the Autonomous Literature Synthesizer.
 
 Supports two LLM backends:
-  - Groq (cloud, free) – default, no install needed
+  - Gemini (cloud, free) – 15 RPM, 1M TPM on free tier (recommended)
+  - Groq (cloud, free) – 6k TPM (very limited)
   - Ollama (local) – fallback for offline use
 
 Five specialized agents:
@@ -31,9 +32,29 @@ from tools import (
     StoreInVectorDBTool,
 )
 
+# ── Module-level shared LLM instance ──────────────────────────────────
+# Re-using a single LLM object means LiteLLM's internal rate-limiter
+# and retry tracker work correctly across all 5 agents.
+_shared_llm: LLM | None = None
+
 
 def _get_llm() -> LLM:
-    """Create LLM – prefers Gemini (1M TPM free), falls back to Groq, then Ollama."""
+    """Create or return a shared LLM instance.
+
+    Prefers Gemini (1M TPM free), falls back to Groq, then Ollama.
+    Uses a module-level singleton so all agents share one rate-limiter.
+    """
+    global _shared_llm
+    if _shared_llm is not None:
+        return _shared_llm
+
+    # ── Configure LiteLLM retry behaviour via env vars ──────────────
+    # These make LiteLLM automatically retry on 429 (rate limit) errors
+    # with exponential backoff, instead of crashing immediately.
+    os.environ.setdefault("LITELLM_NUM_RETRIES", "10")
+    os.environ.setdefault("LITELLM_RETRY_DELAY", "10")  # base delay in seconds
+    os.environ.setdefault("LITELLM_REQUEST_TIMEOUT", "180")
+
     # Priority 1: Google Gemini (1,000,000 TPM on free tier – best choice)
     if config.GEMINI_API_KEY:
         os.environ["GEMINI_API_KEY"] = config.GEMINI_API_KEY
@@ -42,27 +63,38 @@ def _get_llm() -> LLM:
         model_name = config.GEMINI_MODEL
         if not model_name.startswith("gemini/"):
             model_name = f"gemini/{model_name}"
-        return LLM(
+        _shared_llm = LLM(
             model=model_name,
             temperature=config.GEMINI_TEMPERATURE,
-            max_retries=3,
-            timeout=120,
+            max_retries=10,       # retry up to 10 times on rate-limit
+            timeout=180,          # generous timeout per call
         )
+        return _shared_llm
+
     # Priority 2: Groq (very rate-limited on free tier – 6k TPM)
     if config.LLM_BACKEND == "groq" and config.GROQ_API_KEY:
         os.environ["GROQ_API_KEY"] = config.GROQ_API_KEY
-        return LLM(
+        _shared_llm = LLM(
             model=f"groq/{config.GROQ_MODEL}",
             temperature=config.GROQ_TEMPERATURE,
-            max_retries=6,
-            timeout=120,
+            max_retries=10,
+            timeout=180,
         )
+        return _shared_llm
+
     # Priority 3: Ollama (local)
-    return LLM(
+    _shared_llm = LLM(
         model=f"ollama/{config.OLLAMA_MODEL}",
         base_url=config.OLLAMA_BASE_URL,
         temperature=config.OLLAMA_TEMPERATURE,
     )
+    return _shared_llm
+
+
+def reset_llm():
+    """Reset the shared LLM instance (e.g. after changing API keys)."""
+    global _shared_llm
+    _shared_llm = None
 
 
 # ╔══════════════════════════════════════════════╗
@@ -79,7 +111,7 @@ def create_planner_agent() -> Agent:
         tools=[ExtractMetadataTool()],
         verbose=config.VERBOSE,
         allow_delegation=False,
-        max_iter=3,
+        max_iter=2,       # Planner is simple – 2 iterations max
         memory=False,
     )
 
@@ -98,7 +130,7 @@ def create_searcher_agent() -> Agent:
         tools=[ArxivSearchTool()],
         verbose=config.VERBOSE,
         allow_delegation=False,
-        max_iter=5,
+        max_iter=3,       # Reduced from 5 – fewer iterations = fewer API calls
         memory=False,
     )
 
@@ -117,7 +149,7 @@ def create_extraction_agent() -> Agent:
         tools=[QueryVectorDBTool()],
         verbose=config.VERBOSE,
         allow_delegation=False,
-        max_iter=4,
+        max_iter=2,       # Reduced from 4
         memory=False,
     )
 
@@ -136,7 +168,7 @@ def create_critic_agent() -> Agent:
         tools=[],
         verbose=config.VERBOSE,
         allow_delegation=False,
-        max_iter=3,
+        max_iter=2,       # Reduced from 3 – critic doesn't need retries
         memory=False,
     )
 
@@ -155,6 +187,6 @@ def create_writer_agent() -> Agent:
         tools=[],
         verbose=config.VERBOSE,
         allow_delegation=False,
-        max_iter=4,
+        max_iter=2,       # Reduced from 4
         memory=False,
     )

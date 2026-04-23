@@ -585,29 +585,39 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
             verbose=config.VERBOSE,
             memory=False,       # Disable crew memory to save tokens
             full_output=True,
-            max_rpm=1,          # Limit to 1 request/minute to safely pace free-tier
+            max_rpm=10,         # Gemini allows 15 RPM; 10 leaves headroom
         )
 
-        # ── Retry loop: auto-wait on Groq rate-limit errors ──────────────
+        # ── Retry loop: auto-wait on rate-limit errors ──────────────
+        # Catches Gemini (ResourceExhausted/429) and Groq rate limits.
         import re as _re
+        from agents import reset_llm
         result = None
-        for _attempt in range(6):
+        _rate_limit_patterns = [
+            "rate_limit_exceeded", "RateLimitError", "ResourceExhausted",
+            "429", "quota", "Too Many Requests", "RATE_LIMIT_EXCEEDED",
+        ]
+        for _attempt in range(10):
             try:
                 result = crew.kickoff()
                 break
             except Exception as _e:
                 err_str = str(_e)
-                if "rate_limit_exceeded" in err_str or "RateLimitError" in err_str:
+                _is_rate_limit = any(p in err_str for p in _rate_limit_patterns)
+                if _is_rate_limit:
                     # Parse wait time from error message e.g. "try again in 36.06s"
                     _wait_match = _re.search(r"in (\d+\.?\d*)\s*s", err_str)
-                    _wait = float(_wait_match.group(1)) + 5 if _wait_match else 65
-                    _wait = min(_wait, 90)  # cap at 90s
-                    add_log(f"⏳ Rate limit hit – waiting {_wait:.0f}s then retrying (attempt {_attempt+1}/6)...")
+                    # Exponential backoff: 30s, 45s, 60s, 75s, 90s…
+                    _base_wait = 30 + (_attempt * 15)
+                    _wait = float(_wait_match.group(1)) + 5 if _wait_match else _base_wait
+                    _wait = min(_wait, 120)  # cap at 2 minutes
+                    add_log(f"⏳ Rate limit hit – waiting {_wait:.0f}s then retrying (attempt {_attempt+1}/10)...")
                     time.sleep(_wait)
+                    reset_llm()  # Reset shared LLM to clear any stale state
                 else:
                     raise
         if result is None:
-            raise RuntimeError("Pipeline failed after 6 retries due to persistent rate limits.")
+            raise RuntimeError("Pipeline failed after 10 retries due to persistent rate limits.")
 
         report = str(result)
         add_log("✓ Agent crew completed")
@@ -784,7 +794,8 @@ st.markdown("""
 # ── Stats ──
 stat_cols = st.columns(4)
 with stat_cols[0]:
-    st.metric("Model", model_options.get(config.GROQ_MODEL, config.GROQ_MODEL).split("(")[0].strip())
+    _active_model = config.GEMINI_MODEL if using_gemini else config.GROQ_MODEL
+    st.metric("Model", model_options.get(_active_model, _active_model).split("(")[0].strip())
 with stat_cols[1]:
     st.metric("Agent Crew", "5 Agents")
 with stat_cols[2]:

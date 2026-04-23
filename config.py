@@ -63,7 +63,7 @@ CHROMA_COLLECTION_NAME = "research_papers"
 # ──────────────────────────────────────────────
 # ArXiv
 # ──────────────────────────────────────────────
-ARXIV_MAX_RESULTS_PER_QUERY = int(os.getenv("ARXIV_MAX_RESULTS", "5"))
+ARXIV_MAX_RESULTS_PER_QUERY = int(os.getenv("ARXIV_MAX_RESULTS", "3"))
 ARXIV_RATE_LIMIT_SECONDS = float(os.getenv("ARXIV_RATE_LIMIT", "3.0"))
 ARXIV_NUM_RETRIES = int(os.getenv("ARXIV_NUM_RETRIES", "3"))
 
@@ -78,7 +78,7 @@ MAX_REWRITE_ATTEMPTS = int(os.getenv("MAX_REWRITE_ATTEMPTS", "3"))
 # ──────────────────────────────────────────────
 # Report
 # ──────────────────────────────────────────────
-TARGET_REPORT_WORDS = int(os.getenv("TARGET_REPORT_WORDS", "1500"))
+TARGET_REPORT_WORDS = int(os.getenv("TARGET_REPORT_WORDS", "800"))
 
 # ──────────────────────────────────────────────
 # Logging
