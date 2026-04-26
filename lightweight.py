@@ -110,7 +110,10 @@ def _llm_call(prompt: str, max_tokens: int = 4096, add_log=None) -> str:
                     max_tokens=max_tokens,
                     timeout=180,
                 )
-                result = response.choices[0].message.content.strip()
+                content = response.choices[0].message.content
+                if not content:
+                    raise ValueError(f"{pname} returned an empty response (possibly content filter or unsupported endpoint).")
+                result = content.strip()
                 log(f"✓ {pname} responded ({len(result)} chars)")
                 return result
             except Exception as e:
