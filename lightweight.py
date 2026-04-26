@@ -23,6 +23,7 @@ from pathlib import Path
 import litellm
 
 import config
+import httpx
 from utils import (
     ArxivSearcher,
     VectorStore,
@@ -39,8 +40,22 @@ from utils import (
 # ════════════════════════════════════════════
 
 
+def _ollama_is_reachable() -> bool:
+    """Quick health‑check for an Ollama server.
+    Returns True if we can get a 200 response from the base URL.
+    """
+    try:
+        resp = httpx.get(config.OLLAMA_BASE_URL, timeout=2)
+        return resp.status_code == 200
+    except Exception:
+        return False
+
+
 def _get_providers() -> list[dict]:
-    """Return ordered list of available LLM providers."""
+    """Return ordered list of available LLM providers.
+    Ollama is only added when a reachable server is detected – this avoids the
+    "Cannot assign requested address" error in cloud environments.
+    """
     providers = []
 
     if config.GEMINI_API_KEY:
@@ -58,7 +73,12 @@ def _get_providers() -> list[dict]:
         os.environ["OPENROUTER_API_KEY"] = config.OPENROUTER_API_KEY
         providers.append({"name": "OpenRouter", "model": f"openrouter/{config.OPENROUTER_MODEL}"})
 
-    providers.append({"name": "Ollama", "model": f"ollama/{config.OLLAMA_MODEL}"})
+    # Only add Ollama if a local server is reachable (e.g., running on your dev machine)
+    if _ollama_is_reachable():
+        providers.append({"name": "Ollama", "model": f"ollama/{config.OLLAMA_MODEL}"})
+    else:
+        # In cloud deployments we just skip Ollama – the error message will be clearer.
+        pass
     return providers
 
 
@@ -125,10 +145,12 @@ def _llm_call(prompt: str, max_tokens: int = 4096, add_log=None) -> str:
 
     raise RuntimeError(
         f"All LLM providers failed. Last error: {last_error}\n\n"
-        "💡 Add more provider keys for automatic failover:\n"
-        "  • Gemini: https://aistudio.google.com/apikey\n"
-        "  • OpenRouter: https://openrouter.ai/keys\n"
-        "  • Groq: https://console.groq.com"
+        "💡 Ensure you have at least one valid provider key set (Gemini, Groq, or OpenRouter).\n"
+        "   • Gemini: https://aistudio.google.com/apikey\n"
+        "   • OpenRouter: https://openrouter.ai/keys\n"
+        "   • Groq: https://console.groq.com\n"
+        "If running locally and you want to use Ollama, start the Ollama server and ensure \n"
+        "`config.OLLAMA_BASE_URL` points to it (default http://localhost:11434)."
     )
 
 
