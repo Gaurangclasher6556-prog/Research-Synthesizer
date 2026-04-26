@@ -43,6 +43,10 @@ GROQ_TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0.3"))
 # - llama-3.1-8b-instant      (fastest)
 # - llama-3.3-70b-versatile   (best quality)
 
+# ── OpenRouter (Cloud – aggregator) ──
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemini-2.0-flash-lite-preview-02-05:free")
+
 # ── Ollama (Local – fallback) ──
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "llama3")

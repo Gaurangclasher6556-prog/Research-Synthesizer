@@ -498,6 +498,17 @@ def _load_gemini_key() -> str:
     return config.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
 
 
+def _load_openrouter_key() -> str:
+    """Load OpenRouter API key from: Streamlit secrets > .env > manual input."""
+    try:
+        key = st.secrets.get("OPENROUTER_API_KEY", "")
+        if key:
+            return key
+    except Exception:
+        pass
+    return config.OPENROUTER_API_KEY or os.environ.get("OPENROUTER_API_KEY", "")
+
+
 def check_groq_key() -> bool:
     key = _load_groq_key()
     return bool(key and len(key) > 10)
@@ -551,14 +562,14 @@ def run_full_pipeline(pdf_path: Path, progress_bar, status_text) -> str:
                       {"title": paper_metadata["title"], "is_target": "true"})
         add_log("✓ Paper embedded and stored")
 
-        # Step 3: Lightweight AI Pipeline (2 LLM calls only)
+        # Step 3: RAG AI Pipeline (2 LLM calls, multi-provider failover)
         st.session_state.pipeline_step = 3
-        status_text.markdown("**Step 3 of 4** — Running AI analysis pipeline... *(~1-2 minutes)*")
+        status_text.markdown("**Step 3 of 4** — Running RAG-augmented AI pipeline... *(~1-3 minutes)*")
         progress_bar.progress(40)
-        add_log("🤖 Starting lightweight AI pipeline...")
-        add_log("   · Step A: Generating arXiv search queries (1 LLM call)")
-        add_log("   · Step B: Searching arXiv (no LLM needed)")
-        add_log("   · Step C: Generating synthesis report (1 LLM call)")
+        add_log("🤖 Starting RAG pipeline with multi-provider failover...")
+        add_log("   · Step A: Generate search queries (LLM call 1)")
+        add_log("   · Step B: Search arXiv + store in VectorDB (RAG)")
+        add_log("   · Step C: RAG-augmented synthesis report (LLM call 2)")
 
         from lightweight import run_lightweight_pipeline
 
@@ -608,66 +619,80 @@ with st.sidebar:
 
     st.divider()
 
-    # API Key section – Gemini preferred (1M TPM free), Groq as fallback
-    st.markdown("### 🔑 AI Engine")
+    # API Key section – Multi-provider with automatic failover
+    st.markdown("### 🔑 AI Providers")
+    st.caption("Add multiple keys for automatic failover if one is rate-limited.")
 
     gemini_secret = _load_gemini_key()
     groq_secret = _load_groq_key()
+    openrouter_secret = _load_openrouter_key()
 
+    # Set all available keys
+    active_providers = []
     if gemini_secret:
         config.GEMINI_API_KEY = gemini_secret
         os.environ["GEMINI_API_KEY"] = gemini_secret
-        has_key = True
-        st.success("✓ Gemini AI ready (1M TPM)", icon="✅")
-    elif groq_secret:
+        active_providers.append("Gemini")
+    if groq_secret:
         config.GROQ_API_KEY = groq_secret
         os.environ["GROQ_API_KEY"] = groq_secret
-        has_key = True
-        st.success("✓ Groq AI ready", icon="✅")
+        active_providers.append("Groq")
+    if openrouter_secret:
+        config.OPENROUTER_API_KEY = openrouter_secret
+        os.environ["OPENROUTER_API_KEY"] = openrouter_secret
+        active_providers.append("OpenRouter")
+
+    has_key = len(active_providers) > 0
+
+    if active_providers:
+        st.success(f"✓ {' → '.join(active_providers)} (auto-failover)", icon="✅")
+        if len(active_providers) == 1:
+            st.caption("💡 Add more provider keys below for failover protection.")
     else:
-        # Manual entry — prefer Gemini
-        st.info(
-            "**Recommended:** Use Google Gemini (1M tokens/min free).\n\n"
-            "Get a free key → [aistudio.google.com](https://aistudio.google.com/apikey)",
-            icon="🌟"
-        )
+        st.warning("No API keys configured. Add at least one below.", icon="⚠️")
+
+    with st.expander("🔧 Configure API Keys", expanded=not has_key):
         gemini_key = st.text_input(
-            "Gemini API Key (Recommended)",
+            "Gemini API Key (Primary)",
             value="", type="password",
-            help="Free from aistudio.google.com — 1,000,000 tokens/min!",
+            help="Free → aistudio.google.com/apikey",
         )
         groq_key_input = st.text_input(
-            "Groq API Key (Fallback)",
+            "Groq API Key (Fallback 1)",
             value="", type="password",
-            help="Free from console.groq.com — but very rate-limited (6k TPM)",
+            help="Free → console.groq.com",
+        )
+        openrouter_key_input = st.text_input(
+            "OpenRouter API Key (Fallback 2)",
+            value="", type="password",
+            help="Free → openrouter.ai/keys (many free models)",
         )
         if gemini_key:
             config.GEMINI_API_KEY = gemini_key
             os.environ["GEMINI_API_KEY"] = gemini_key
             has_key = True
-            st.success("✓ Gemini key set!", icon="✅")
-        elif groq_key_input:
+        if groq_key_input:
             config.GROQ_API_KEY = groq_key_input
             os.environ["GROQ_API_KEY"] = groq_key_input
-            has_key = bool(groq_key_input and len(groq_key_input) > 10)
-            if has_key:
-                st.warning("⚠️ Groq has very low rate limits. Gemini is recommended.", icon="⚠️")
-        else:
-            has_key = False
+            has_key = True
+        if openrouter_key_input:
+            config.OPENROUTER_API_KEY = openrouter_key_input
+            os.environ["OPENROUTER_API_KEY"] = openrouter_key_input
+            has_key = True
 
     st.divider()
 
-    # Model Selection — Gemini models first
+    # Model Selection — primary provider model
     st.markdown("### ⚙️ Model & Parameters")
     using_gemini = bool(config.GEMINI_API_KEY)
     if using_gemini:
         model_options = {
             "gemini-2.0-flash": "✨ Gemini 2.0 Flash (Recommended)",
+            "gemini-2.5-flash-preview-04-17": "Gemini 2.5 Flash (Latest)",
             "gemini-1.5-flash": "Gemini 1.5 Flash (Stable)",
-            "gemini-1.5-pro": "Gemini 1.5 Pro (High Quality)",
         }
         selected_model = st.selectbox(
-            "Language Model",
+            "Primary Model",
             options=list(model_options.keys()),
             format_func=lambda x: model_options[x],
         )
@@ -679,7 +704,7 @@ with st.sidebar:
             "gemma2-9b-it": "Gemma 2 9B (Google)",
         }
         selected_model = st.selectbox(
-            "Language Model",
+            "Primary Model",
             options=list(model_options.keys()),
             format_func=lambda x: model_options[x],
         )
@@ -706,8 +731,8 @@ with st.sidebar:
     st.divider()
     st.markdown("""
     <div style="text-align:center; font-size:11px; color:#484f58; padding:4px 0;">
-        Powered by CrewAI · Groq · ChromaDB<br>
-        Free & Open Source
+        Powered by RAG · Multi-Provider AI · ChromaDB<br>
+        Gemini · Groq · OpenRouter · Free & Open Source
     </div>
     """, unsafe_allow_html=True)
 
@@ -904,7 +929,8 @@ if st.session_state.pipeline_complete and st.session_state.report:
     hdr_cols = st.columns([4, 1, 1])
     with hdr_cols[0]:
         st.markdown(f"### Synthesis Report")
-        st.caption(f"**{title[:100]}** · {wc} words · {elapsed}s · {model_options.get(config.GROQ_MODEL, '').split('(')[0].strip()}")
+        _active_model_name = model_options.get(selected_model, selected_model).split("(")[0].strip()
+        st.caption(f"**{title[:100]}** · {wc} words · {elapsed}s · {_active_model_name}")
     with hdr_cols[1]:
         st.download_button(
             "⬇ Download",

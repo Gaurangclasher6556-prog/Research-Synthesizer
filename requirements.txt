@@ -1,7 +1,4 @@
-# ══════════════════════════════════════════════
-# Research Synthesizer – Cloud-Deployable Dependencies
-# ══════════════════════════════════════════════
-
+# Research Synthesizer - Cloud-Deployable Dependencies
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch
 crewai[litellm,google-genai]
@@ -9,7 +6,8 @@ google-generativeai
 crewai-tools
 PyMuPDF
 chromadb
-pysqlite3-binary
+pysqlite3-binary; sys_platform == "linux"
+litellm
 arxiv
 sentence-transformers
 scikit-learn

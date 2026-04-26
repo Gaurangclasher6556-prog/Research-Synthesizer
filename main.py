@@ -55,7 +55,7 @@ def parse_args() -> argparse.Namespace:
         prog="Research Synthesizer",
         description=(
             "🔬 Autonomous Literature Synthesizer – "
-            "An Andrew Ng–inspired agentic workflow that critiques a "
+            "An agentic workflow that critiques a "
             "research paper and finds related work, all locally."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,

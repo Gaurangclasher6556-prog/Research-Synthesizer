@@ -1,6 +1,6 @@
 # Autonomous Literature Synthesizer
 
-### An Andrew Ng–Inspired Agentic Workflow for Local Research Paper Analysis
+### An Agentic Workflow for Local Research Paper Analysis
 
 > **Zero paid APIs.** Everything runs locally with Ollama, ChromaDB, and SentenceTransformers.
 

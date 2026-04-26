@@ -1,12 +1,14 @@
 """
-lightweight.py – Lightweight 2-call pipeline for the Autonomous Literature Synthesizer.
+lightweight.py – RAG-augmented pipeline with multi-provider failover.
 
-Bypasses CrewAI entirely. Uses only 2 direct LiteLLM API calls:
+Uses only 2 direct LLM calls with automatic provider fallback:
+  Gemini → Groq → OpenRouter → Ollama
+
   Call 1: Generate 3 arXiv search queries from the paper
-  Call 2: Generate the full synthesis report from paper + found papers
+  Call 2: Generate the full RAG-augmented synthesis report
 
-This is designed for free-tier LLM APIs (Gemini, Groq) where rate limits
-make the 5-agent CrewAI pipeline impractical.
+If one provider is rate-limited (429), the system automatically
+falls back to the next available provider — no manual intervention.
 """
 
 from __future__ import annotations
@@ -32,50 +34,161 @@ from utils import (
 )
 
 
-def _get_model_name() -> str:
-    """Return the LiteLLM-compatible model name."""
+# ════════════════════════════════════════════
+# MULTI-PROVIDER LLM LAYER
+# ════════════════════════════════════════════
+
+
+def _get_providers() -> list[dict]:
+    """Return ordered list of available LLM providers."""
+    providers = []
+
     if config.GEMINI_API_KEY:
         os.environ["GEMINI_API_KEY"] = config.GEMINI_API_KEY
         model = config.GEMINI_MODEL
         if not model.startswith("gemini/"):
             model = f"gemini/{model}"
-        return model
+        providers.append({"name": "Gemini", "model": model})
+
     if config.GROQ_API_KEY:
         os.environ["GROQ_API_KEY"] = config.GROQ_API_KEY
-        return f"groq/{config.GROQ_MODEL}"
-    return f"ollama/{config.OLLAMA_MODEL}"
+        providers.append({"name": "Groq", "model": f"groq/{config.GROQ_MODEL}"})
+
+    if config.OPENROUTER_API_KEY:
+        os.environ["OPENROUTER_API_KEY"] = config.OPENROUTER_API_KEY
+        providers.append({"name": "OpenRouter", "model": f"openrouter/{config.OPENROUTER_MODEL}"})
+
+    providers.append({"name": "Ollama", "model": f"ollama/{config.OLLAMA_MODEL}"})
+    return providers
 
 
-def _llm_call(model: str, prompt: str, max_tokens: int = 4096) -> str:
-    """Make a single LLM call with built-in retry and backoff."""
-    for attempt in range(8):
+def _llm_call(prompt: str, max_tokens: int = 4096, add_log=None) -> str:
+    """Make an LLM call with automatic multi-provider fallback.
+
+    If a provider hits its daily quota (limit: 0), skip immediately.
+    If a provider hits per-minute limits, retry with backoff up to 5 times.
+    """
+    providers = _get_providers()
+    last_error = None
+
+    def log(msg):
+        if add_log:
+            add_log(msg)
+        logger.info(msg)
+
+    for provider in providers:
+        model_name = provider["model"]
+        pname = provider["name"]
+
+        for attempt in range(5):
+            try:
+                log(f"🔗 {pname} (attempt {attempt + 1})...")
+                response = litellm.completion(
+                    model=model_name,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.3,
+                    max_tokens=max_tokens,
+                    timeout=180,
+                )
+                result = response.choices[0].message.content.strip()
+                log(f"✓ {pname} responded ({len(result)} chars)")
+                return result
+            except Exception as e:
+                err_str = str(e)
+                err_lower = err_str.lower()
+                is_rate = any(k in err_lower for k in [
+                    "rate_limit", "ratelimit", "429", "resourceexhausted",
+                    "quota", "too many requests", "resource_exhausted",
+                ])
+                if is_rate:
+                    # Daily quota completely gone → skip provider
+                    if "limit: 0" in err_str or "perdayperproject" in err_lower.replace(" ", "").replace("_", ""):
+                        log(f"⛔ {pname} daily quota exhausted → next provider")
+                        last_error = e
+                        break
+                    if attempt < 4:
+                        wait = 30 + (attempt * 15)
+                        match = re.search(r"in (\d+\.?\d*)\s*s", err_str)
+                        if match:
+                            wait = float(match.group(1)) + 5
+                        wait = min(wait, 90)
+                        log(f"⏳ {pname} rate limit – waiting {wait:.0f}s...")
+                        time.sleep(wait)
+                    else:
+                        log(f"⛔ {pname} retries exhausted → next provider")
+                        last_error = e
+                        break
+                else:
+                    log(f"❌ {pname} error: {err_str[:150]}")
+                    last_error = e
+                    break
+
+    raise RuntimeError(
+        f"All LLM providers failed. Last error: {last_error}\n\n"
+        "💡 Add more provider keys for automatic failover:\n"
+        "  • Gemini: https://aistudio.google.com/apikey\n"
+        "  • OpenRouter: https://openrouter.ai/keys\n"
+        "  • Groq: https://console.groq.com"
+    )
+
+
+# ════════════════════════════════════════════
+# RAG HELPERS
+# ════════════════════════════════════════════
+
+
+def _store_papers_in_vectordb(papers: list[dict], vs: VectorStore) -> int:
+    """Store found papers' abstracts in ChromaDB for RAG retrieval."""
+    stored = 0
+    for paper in papers:
+        pid = paper.get("id", "unknown")
+        abstract = paper.get("abstract", "")
+        title = paper.get("title", "")
+        authors = ", ".join(paper.get("authors", [])[:5])
+        if not abstract:
+            continue
+        text = f"Title: {title}\nAuthors: {authors}\n\nAbstract:\n{abstract}"
         try:
-            response = litellm.completion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3,
-                max_tokens=max_tokens,
-                timeout=180,
-            )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            err = str(e)
-            is_rate_limit = any(p in err for p in [
-                "rate_limit", "RateLimit", "429", "ResourceExhausted",
-                "quota", "Too Many Requests", "RATE_LIMIT",
-            ])
-            if is_rate_limit and attempt < 7:
-                wait = 30 + (attempt * 20)  # 30s, 50s, 70s, 90s...
-                # Try to parse server-suggested wait time
-                match = re.search(r"in (\d+\.?\d*)\s*s", err)
-                if match:
-                    wait = float(match.group(1)) + 5
-                wait = min(wait, 120)
-                logger.warning(f"⏳ Rate limit (attempt {attempt+1}/8) – waiting {wait:.0f}s...")
-                time.sleep(wait)
-            else:
-                raise
-    raise RuntimeError("LLM call failed after 8 retries.")
+            vs.add_paper(pid, text, {"title": title, "authors": authors})
+            stored += 1
+        except Exception:
+            pass
+    return stored
+
+
+def _rag_retrieve(vs: VectorStore, queries: list[str], n_per_query: int = 3) -> str:
+    """Query vector DB and format retrieved chunks as context."""
+    seen = set()
+    chunks = []
+    for query in queries:
+        try:
+            for r in vs.query(query, n_results=n_per_query):
+                doc = r.get("document", "").strip()
+                doc_key = doc[:200]
+                if doc_key in seen or not doc:
+                    continue
+                seen.add(doc_key)
+                chunks.append({
+                    "text": doc[:600],
+                    "source": r.get("metadata", {}).get("title", "Unknown"),
+                    "distance": r.get("distance", 999),
+                })
+        except Exception:
+            pass
+
+    if not chunks:
+        return ""
+
+    chunks.sort(key=lambda x: x["distance"])
+    parts = ["\n═══ RETRIEVED CONTEXT (RAG) ═══"]
+    for i, c in enumerate(chunks[:8], 1):
+        parts.append(f"\n[Chunk {i} | {c['source']}]\n{c['text']}")
+    return "\n".join(parts)
+
+
+# ════════════════════════════════════════════
+# MAIN PIPELINE
+# ════════════════════════════════════════════
 
 
 def run_lightweight_pipeline(
@@ -84,68 +197,56 @@ def run_lightweight_pipeline(
     add_log=None,
 ) -> str:
     """
-    Run the full synthesis pipeline using only 2 LLM calls.
+    2-call RAG pipeline with multi-provider failover.
 
     Args:
-        paper_markdown: Parsed markdown text of the target paper.
-        paper_metadata: Dict with 'title' and 'abstract' keys.
-        add_log: Optional callback for progress logging.
+        paper_markdown: Parsed markdown of the target paper.
+        paper_metadata: Dict with 'title' and 'abstract'.
+        add_log: Optional progress callback.
 
     Returns:
-        The synthesis report as a markdown string.
+        Synthesis report as markdown string.
     """
     def log(msg):
         if add_log:
             add_log(msg)
         logger.info(msg)
 
-    model = _get_model_name()
     title = paper_metadata.get("title", "Unknown")
     abstract = paper_metadata.get("abstract", "")[:1500]
 
-    # ════════════════════════════════════════════
-    # CALL 1: Generate arXiv search queries
-    # ════════════════════════════════════════════
+    providers = _get_providers()
+    log(f"🔌 Providers: {' → '.join(p['name'] for p in providers)}")
+
+    # ── CALL 1: Generate search queries ──
     log("🔍 Generating search queries...")
+    query_prompt = (
+        "You are a research assistant. Given this paper, generate exactly 3 "
+        "arXiv search queries to find related work.\n\n"
+        f"**Paper Title:** {title}\n\n"
+        f"**Abstract:** {abstract}\n\n"
+        "Return ONLY a JSON array of 3 query strings. Example:\n"
+        '["transformer attention mechanisms", "large language model training", '
+        '"neural network scaling laws"]\n\n'
+        "Return ONLY the JSON array, no other text."
+    )
 
-    query_prompt = f"""You are a research assistant. Given this paper, generate exactly 3 arXiv search queries to find related work.
+    queries_raw = _llm_call(query_prompt, max_tokens=500, add_log=add_log)
+    log("✓ Query generation complete")
 
-**Paper Title:** {title}
-
-**Abstract:** {abstract}
-
-Return ONLY a JSON array of 3 query strings. Example:
-["transformer attention mechanisms", "large language model training", "neural network scaling laws"]
-
-Return ONLY the JSON array, no other text."""
-
-    queries_raw = _llm_call(model, query_prompt, max_tokens=500)
-    log(f"✓ Query generation complete")
-
-    # Parse queries from LLM response
     try:
-        # Try to extract JSON array from the response
-        json_match = re.search(r'\[.*?\]', queries_raw, re.DOTALL)
-        if json_match:
-            queries = json.loads(json_match.group())
-        else:
-            # Fallback: split by newlines and clean up
-            queries = [q.strip().strip('"\'').strip() for q in queries_raw.strip().split('\n') if q.strip()]
-    except (json.JSONDecodeError, Exception):
-        # Ultimate fallback: use title keywords
+        m = re.search(r'\[.*?\]', queries_raw, re.DOTALL)
+        queries = json.loads(m.group()) if m else [title]
+    except Exception:
         queries = [title, abstract[:100]]
-
-    queries = queries[:3]  # Cap at 3
+    queries = queries[:3]
     log(f"📋 Queries: {queries}")
 
-    # ════════════════════════════════════════════
-    # ARXIV SEARCH (no LLM needed)
-    # ════════════════════════════════════════════
+    # ── ARXIV SEARCH (no LLM) ──
     log("🔎 Searching arXiv...")
     searcher = ArxivSearcher()
     all_papers = []
     seen_ids = set()
-
     for i, query in enumerate(queries):
         try:
             results = searcher.search(query, max_results=config.ARXIV_MAX_RESULTS_PER_QUERY)
@@ -157,81 +258,85 @@ Return ONLY the JSON array, no other text."""
             log(f"   Query {i+1}: '{query[:50]}' → {len(results)} results")
         except Exception as e:
             log(f"   Query {i+1} failed: {str(e)[:80]}")
-
     log(f"✓ Found {len(all_papers)} unique papers")
 
-    # ════════════════════════════════════════════
-    # BUILD CONTEXT from found papers
-    # ════════════════════════════════════════════
+    # ── RAG: Store & Retrieve ──
+    log("🧠 Building RAG knowledge base...")
+    rag_context = ""
+    try:
+        vs = VectorStore()
+        stored = _store_papers_in_vectordb(all_papers[:8], vs)
+        log(f"📦 Stored {stored} papers in vector DB")
+
+        rag_queries = [
+            f"methodology and approach in {title}",
+            "key results and contributions",
+            "limitations and future work",
+            abstract[:200] if abstract else title,
+        ]
+        rag_context = _rag_retrieve(vs, rag_queries)
+        if rag_context:
+            log("✓ RAG context retrieved")
+        else:
+            log("⚠ No RAG context — continuing without")
+    except Exception as e:
+        log(f"⚠ RAG failed ({str(e)[:80]}) — continuing without")
+
+    # ── Build related work context ──
     related_work_text = ""
     citations = []
-    for i, paper in enumerate(all_papers[:8]):  # Cap at 8 papers
+    for i, paper in enumerate(all_papers[:8]):
         citation = format_citation(paper)
         citations.append(citation)
-        related_work_text += f"""
-### Paper {i+1}: {paper.get('title', 'Unknown')} {citation}
-**Authors:** {', '.join(paper.get('authors', [])[:3])}
-**Year:** {paper.get('published', '')[:4]}
-**Abstract:** {paper.get('abstract', '')[:400]}
----
-"""
-
+        related_work_text += (
+            f"\n### Paper {i+1}: {paper.get('title', 'Unknown')} {citation}\n"
+            f"**Authors:** {', '.join(paper.get('authors', [])[:3])}\n"
+            f"**Year:** {paper.get('published', '')[:4]}\n"
+            f"**Abstract:** {paper.get('abstract', '')[:400]}\n---\n"
+        )
     if not related_work_text:
-        related_work_text = "(No related papers found on arXiv. Provide analysis based on the paper alone.)"
+        related_work_text = "(No related papers found. Analyze based on the paper alone.)"
 
-    # ════════════════════════════════════════════
-    # CALL 2: Generate the full synthesis report
-    # ════════════════════════════════════════════
-    log("📝 Generating synthesis report...")
-
-    # Wait a bit before the second call to avoid rate limits
-    time.sleep(5)
+    # ── CALL 2: RAG-augmented synthesis report ──
+    log("📝 Generating RAG-augmented synthesis report...")
+    time.sleep(5)  # Brief pause to avoid back-to-back rate limits
 
     target_words = config.TARGET_REPORT_WORDS
-    report_prompt = f"""You are a senior academic reviewer. Write a comprehensive {target_words}-word Research Synthesis Report for the following paper, using the related work provided.
+    cite_example = citations[0] if citations else "[Author et al., Year]"
 
-═══ TARGET PAPER ═══
-**Title:** {title}
-**Abstract:** {abstract}
+    report_prompt = (
+        f"You are a senior academic reviewer. Write a comprehensive "
+        f"{target_words}-word Research Synthesis Report for the following paper, "
+        f"using the related work and retrieved context provided.\n\n"
+        f"═══ TARGET PAPER ═══\n"
+        f"**Title:** {title}\n**Abstract:** {abstract}\n\n"
+        f"═══ RELATED WORK ═══\n{related_work_text}\n"
+        f"{rag_context}\n\n"
+        f"═══ INSTRUCTIONS ═══\n"
+        f"Write a polished Markdown report:\n\n"
+        f"# Research Synthesis Report\n\n"
+        f"**Target Paper:** {title}\n"
+        f"**Date:** {datetime.now().strftime('%B %d, %Y')}\n"
+        f"**Papers Analyzed:** {len(all_papers)}\n\n"
+        f"## 1. Introduction (~200 words)\n"
+        f"Present the paper and contributions in broader context.\n\n"
+        f"## 2. Related Work Comparison (~200 words)\n"
+        f"Compare with related work. Use retrieved context for specifics.\n\n"
+        f"## 3. Critical Analysis (~200 words)\n"
+        f"Score: Originality, Importance, Evidence, Clarity, Novelty (1-10 each).\n\n"
+        f"## 4. Synthesis & Positioning (~150 words)\n"
+        f"Place paper in broader landscape using retrieved evidence.\n\n"
+        f"## 5. Conclusion (~50 words)\n"
+        f"Final verdict.\n\n"
+        f"## References\n"
+        f"List all cited papers.\n\n"
+        f"REQUIREMENTS:\n"
+        f"- Use citations like {cite_example} throughout\n"
+        f"- Write in your OWN words\n"
+        f"- Ground claims in retrieved context where possible\n"
+        f"- Target: {target_words} words (±20%)"
+    )
 
-═══ RELATED WORK FOUND ON ARXIV ═══
-{related_work_text}
-
-═══ INSTRUCTIONS ═══
-Write a polished Markdown report with these sections:
-
-# Research Synthesis Report
-
-**Target Paper:** {title}
-**Date:** {datetime.now().strftime('%B %d, %Y')}
-**Papers Analyzed:** {len(all_papers)}
-
-## 1. Introduction (~200 words)
-Present the target paper and its main contributions in the broader research context.
-
-## 2. Related Work Comparison (~200 words)
-Compare the target paper with the related work found. Highlight similarities and differences in approach.
-
-## 3. Critical Analysis (~200 words)
-Evaluate the paper on: Originality (1-10), Importance (1-10), Evidence Quality (1-10), Clarity (1-10), Novelty (1-10).
-Give a score and brief justification for each.
-
-## 4. Synthesis & Positioning (~150 words)
-Place the paper within the broader research landscape.
-
-## 5. Conclusion (~50 words)
-Final verdict and recommendations.
-
-## References
-List all cited papers in proper academic format.
-
-REQUIREMENTS:
-- Use in-text citations like {citations[0] if citations else '[Author et al., Year]'} throughout
-- Write in your OWN words – do NOT copy from abstracts
-- Be specific and evidence-based in your analysis
-- Target word count: {target_words} words (±20%)"""
-
-    report = _llm_call(model, report_prompt, max_tokens=4096)
+    report = _llm_call(report_prompt, max_tokens=4096, add_log=add_log)
     log(f"✓ Report generated – {word_count(report)} words")
-
     return report
