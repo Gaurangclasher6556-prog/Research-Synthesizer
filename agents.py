@@ -74,8 +74,11 @@ def _get_llm() -> LLM:
     # Priority 2: Groq (very rate-limited on free tier – 6k TPM)
     if config.LLM_BACKEND == "groq" and config.GROQ_API_KEY:
         os.environ["GROQ_API_KEY"] = config.GROQ_API_KEY
+        groq_model = config.GROQ_MODEL
+        if not groq_model.startswith("groq/"):
+            groq_model = f"groq/{groq_model}"
         _shared_llm = LLM(
-            model=f"groq/{config.GROQ_MODEL}",
+            model=groq_model,
             temperature=config.GROQ_TEMPERATURE,
             max_retries=10,
             timeout=180,

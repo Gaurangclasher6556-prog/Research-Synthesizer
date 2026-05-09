@@ -8,6 +8,7 @@ PyMuPDF
 chromadb
 pysqlite3-binary; sys_platform == "linux"
 litellm
+httpx
 arxiv
 sentence-transformers
 scikit-learn

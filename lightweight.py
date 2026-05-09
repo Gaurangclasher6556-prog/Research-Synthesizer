@@ -67,11 +67,17 @@ def _get_providers() -> list[dict]:
 
     if config.GROQ_API_KEY:
         os.environ["GROQ_API_KEY"] = config.GROQ_API_KEY
-        providers.append({"name": "Groq", "model": f"groq/{config.GROQ_MODEL}"})
+        groq_model = config.GROQ_MODEL
+        if not groq_model.startswith("groq/"):
+            groq_model = f"groq/{groq_model}"
+        providers.append({"name": "Groq", "model": groq_model})
 
     if config.OPENROUTER_API_KEY:
         os.environ["OPENROUTER_API_KEY"] = config.OPENROUTER_API_KEY
-        providers.append({"name": "OpenRouter", "model": f"openrouter/{config.OPENROUTER_MODEL}"})
+        or_model = config.OPENROUTER_MODEL
+        if not or_model.startswith("openrouter/"):
+            or_model = f"openrouter/{or_model}"
+        providers.append({"name": "OpenRouter", "model": or_model})
 
     # Only add Ollama if a local server is reachable (e.g., running on your dev machine)
     if _ollama_is_reachable():

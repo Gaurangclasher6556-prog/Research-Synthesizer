@@ -7,6 +7,13 @@ Supports: Groq (cloud, free) and Ollama (local) as LLM backends.
 import os
 from pathlib import Path
 
+# Load .env file for local development (no-op if not found)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent / ".env")
+except ImportError:
+    pass
+
 # ──────────────────────────────────────────────
 # Paths
 # ──────────────────────────────────────────────
@@ -45,7 +52,7 @@ GROQ_TEMPERATURE = float(os.getenv("GROQ_TEMPERATURE", "0.3"))
 
 # ── OpenRouter (Cloud – aggregator) ──
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "openrouter/free")
+OPENROUTER_MODEL = os.getenv("OPENROUTER_MODEL", "google/gemma-2-9b-it:free")
 
 # ── Ollama (Local – fallback) ──
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
