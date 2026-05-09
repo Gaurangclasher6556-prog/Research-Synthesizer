@@ -10,7 +10,8 @@ pysqlite3-binary; sys_platform == "linux"
 litellm
 httpx
 arxiv
-sentence-transformers
+huggingface_hub<0.25.0
+sentence-transformers>=2.2.2
 scikit-learn
 numpy
 python-dotenv
